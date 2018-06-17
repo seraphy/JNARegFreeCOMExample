@@ -131,6 +131,7 @@ public class MyRegFreeCOMSrvClient {
 	 */
 	public static void main(String[] args) throws Exception {
 		Ole32.INSTANCE.CoInitialize(null);
+		System.out.println("java version=" + System.getProperty("java.version"));
 
 		// リソースに格納されているx86/x64用のDLLを
 		// ロードできるようにテンポラリに展開する
