@@ -11,10 +11,9 @@ import java.nio.channels.ReadableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
+import java.util.Base64;
 
 import com.sun.jna.Platform;
 import com.sun.jna.platform.win32.Ole32;
@@ -55,42 +54,32 @@ public class MyRegFreeCOMSrvClient {
 				"native/" + prefix + "/MyRegFreeCOMSrv.dll"
 				};
 
+		// リソースのハッシュ値を求める
+		ClassLoader clsldr = MyRegFreeCOMSrvClient.class.getClassLoader();
+		SHA1 sha1 = new SHA1();
+		for (String resource : resources) {
+			try (InputStream is = clsldr.getResourceAsStream(resource);
+					ReadableByteChannel rbc = Channels.newChannel(is)) {
+				sha1.update(rbc);
+			}
+		}
+		// ハッシュ値に基づくテンポラリフォルダを準備する
+		byte[] hash = sha1.digest();
+		String hashStr = Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+
 		// 展開先
 		String uniqFolder = MyRegFreeCOMSrvClient.class.getName();
 		Path tempDir = Paths.get(System.getProperty("java.io.tmpdir"));
-		Path nativeDir = tempDir.resolve(uniqFolder)
-				.resolve("native").resolve(prefix);
+		Path nativeDir = tempDir.resolve(uniqFolder).resolve(hashStr).resolve(prefix);
+		System.out.println("nativeDir=" + nativeDir);
 		Files.createDirectories(nativeDir);
 
-		// リソースを展開する
-		ClassLoader clsldr = MyRegFreeCOMSrvClient.class.getClassLoader();
+		// リソースの展開 (すでにファイルがある場合はスキップする。)
+		// 同一内容であればハッシュ値によるフォルダが一致するのでコピーの必要はないはず。
 		for (String resource : resources) {
 			String fileName = Paths.get(resource).getFileName().toString();
 			Path destFile = nativeDir.resolve(fileName);
-
-			boolean exist = Files.exists(destFile);
-			if (exist) {
-				// すでにファイルがある場合
-				byte[] fileHash, resHash;
-
-				// 現在のファイルのハッシュ値を求める
-				try (ReadableByteChannel fc = Files.newByteChannel(destFile,
-						StandardOpenOption.READ)) {
-					fileHash = calcSHA1(fc);
-				}
-
-				// リソースのハッシュ値を求める
-				try (InputStream is = clsldr.getResourceAsStream(resource);
-						ReadableByteChannel rbc = Channels.newChannel(is)) {
-					resHash = calcSHA1(rbc);
-				}
-
-				// リソースとファイルのハッシュが同一であれば存在するものとする.
-				// そうでなければ非存在とみなす。
-				exist = Arrays.equals(fileHash, resHash);
-			}
-
-			if (!exist) {
+			if (!Files.exists(destFile)) {
 				try (InputStream is = clsldr.getResourceAsStream(resource)) {
 					System.out.println("create: " + destFile);
 					Files.copy(is, destFile);
@@ -101,25 +90,31 @@ public class MyRegFreeCOMSrvClient {
 		return nativeDir;
 	}
 
-	/**
-	 * ハッシュ値を求める
-	 * @param ch
-	 * @return
-	 * @throws IOException
-	 */
-	private static byte[] calcSHA1(ReadableByteChannel ch) throws IOException {
-		try {
-			MessageDigest sha1 = MessageDigest.getInstance("SHA1");
-			ByteBuffer buf = ByteBuffer.allocate(4096);
+	private static class SHA1 {
+
+		private final MessageDigest sha1;
+
+		private final ByteBuffer buf = ByteBuffer.allocate(4096);
+
+		SHA1() {
+			try {
+				sha1 = MessageDigest.getInstance("SHA1");
+
+			} catch (NoSuchAlgorithmException ex) {
+				throw new RuntimeException(ex);
+			}
+		}
+
+		void update(ReadableByteChannel ch) throws IOException {
 			int rd;
 			while ((rd = ch.read(buf)) > 0) {
 				sha1.update(buf.array(), 0, rd);
 				buf.clear();
 			}
-			return sha1.digest();
+		}
 
-		} catch (NoSuchAlgorithmException ex) {
-			throw new RuntimeException(ex);
+		byte[] digest() {
+			return sha1.digest();
 		}
 	}
 
